@@ -1,0 +1,44 @@
+target/
+deploy/
+deploy-dev/
+dev-ops/
+docker/
+logs/
+db/
+!.mvn/wrapper/maven-wrapper.jar
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+*.log
+
+### NetBeans ###
+/nbproject/private/
+/build/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# project ignore
+source/media-api/application-production.properties
+source/media-api/deploy_ec2.sh
+source/media-api/execute_jar_on_vm.sh
+source/media-api/target
+source/media-api/logs
+source/media-api/.idea
+source/media-api/*.iml
+
+# Environment
+.env
