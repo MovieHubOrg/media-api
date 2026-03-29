@@ -70,10 +70,6 @@ public class RabbitMQListener {
             String cmd = baseMessageForm.getCmd();
             DeleteFolderForm data = baseMessageForm.getData();
             List<Path> folderPaths = new ArrayList<>();
-            if (baseMessageForm.getTenantId() == null) {
-                log.warn("TenantId is null for CMD_DELETE_VIDEO");
-                return;
-            }
             switch (cmd) {
                 case BaseConstant.CMD_DELETE_TENANT:
                     // delete /uploads/tenant/{businessId}
@@ -83,8 +79,8 @@ public class RabbitMQListener {
                     folderPaths.add(Paths.get(rootDir, "LIBRARY", baseMessageForm.getTenantId()));
                     break;
                 case BaseConstant.CMD_DELETE_VIDEO:
-                    // delete /uploads/LIBRARY/{tenantId}/{videoId}
-                    folderPaths.add(Paths.get(rootDir, "LIBRARY", baseMessageForm.getTenantId(), data.getId().toString()));
+                    // delete /uploads/LIBRARY/{videoId}
+                    folderPaths.add(Paths.get(rootDir, "LIBRARY", data.getId().toString()));
                     break;
                 default:
                     log.warn("Unknown or invalid command: {}", cmd);
