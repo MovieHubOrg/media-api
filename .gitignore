@@ -42,3 +42,5 @@ source/media-api/*.iml
 
 # Environment
 .env
+
+.DS_Store
