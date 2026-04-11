@@ -1,8 +1,11 @@
 package com.media.api.service.rabbit;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.media.api.component.ServerConfigHolder;
 import com.media.api.constant.BaseConstant;
+import com.media.api.dto.ServerConfigDto;
 import com.media.api.form.ConvertVideoForm;
 import com.media.api.form.DeleteFolderForm;
 import com.media.api.form.DeleteListFileForm;
@@ -39,8 +42,8 @@ public class RabbitMQListener {
     @Value("${rabbitmq.app}")
     private String appName;
 
-    @Value("${rabbitmq.media.queue}")
-    private String mediaQueue;
+    @Value("${rabbitmq.streaming.server-queue}")
+    private String streamingQueue;
 
     @Value("${rabbitmq.convert.video.queue}")
     private String convertVideoQueue;
@@ -61,42 +64,38 @@ public class RabbitMQListener {
     @Qualifier("convertExecutor")
     private Executor convertExecutor;
 
-    @RabbitListener(queues = "${rabbitmq.media.queue}")
+    @RabbitListener(queues = "${rabbitmq.streaming.server-queue}")
     public void receiveMessage(String message) {
         try {
-            System.out.println("======> Received message from " + mediaQueue + ": " + message);
-            BaseSendMsgForm<DeleteFolderForm> baseMessageForm = objectMapper.readValue(message, new TypeReference<>() {
+            System.out.println("======> Received message from " + streamingQueue + ": " + message);
+            BaseSendMsgForm<JsonNode> baseMessageForm = objectMapper.readValue(message, new TypeReference<>() {
             });
             String cmd = baseMessageForm.getCmd();
-            DeleteFolderForm data = baseMessageForm.getData();
-            List<Path> folderPaths = new ArrayList<>();
             switch (cmd) {
-                case BaseConstant.CMD_DELETE_TENANT:
-                    // delete /uploads/tenant/{businessId}
-                    folderPaths.add(Paths.get(rootDir, "tenant", data.getId().toString()));
-
-                    // delete /uploads/LIBRARY/{tenantId}
-                    folderPaths.add(Paths.get(rootDir, "LIBRARY", baseMessageForm.getTenantId()));
-                    break;
                 case BaseConstant.CMD_DELETE_VIDEO:
+                    List<Path> folderPaths = new ArrayList<>();
                     // delete /uploads/LIBRARY/{videoId}
-                    folderPaths.add(Paths.get(rootDir, "LIBRARY", data.getId().toString()));
+                    DeleteFolderForm deleteFolderForm = objectMapper.treeToValue(baseMessageForm.getData(), DeleteFolderForm.class);
+                    folderPaths.add(Paths.get(rootDir, "LIBRARY", deleteFolderForm.getId().toString()));
+                    for (Path path : folderPaths) {
+                        if (path != null && path.normalize().startsWith(Paths.get(rootDir).normalize())) {
+                            File folder = path.toFile();
+                            if (folder.exists()) {
+                                FileUtils.deleteDirectory(folder);
+                                log.info("Deleted folder: {}", path);
+                            } else {
+                                log.warn("Folder not found: {}", path);
+                            }
+                        }
+                    }
+                    break;
+                case BaseConstant.CMD_UPDATE_SERVER_CONFIG:
+                    ServerConfigDto serverConfigDto = objectMapper.treeToValue(baseMessageForm.getData(), ServerConfigDto.class);
+                    ServerConfigHolder.setServerConfig(serverConfigDto);
                     break;
                 default:
                     log.warn("Unknown or invalid command: {}", cmd);
                     break;
-            }
-
-            for (Path path : folderPaths) {
-                if (path != null && path.normalize().startsWith(Paths.get(rootDir).normalize())) {
-                    File folder = path.toFile();
-                    if (folder.exists()) {
-                        FileUtils.deleteDirectory(folder);
-                        log.info("Deleted folder: {}", path);
-                    } else {
-                        log.warn("Folder not found: {}", path);
-                    }
-                }
             }
         } catch (Exception e) {
             log.error("Error processing message: {}", e.getMessage(), e);
@@ -107,6 +106,14 @@ public class RabbitMQListener {
     public void receiveMessageFromConvertQueue(Message amqpMessage, Channel channel) {
         long deliveryTag = amqpMessage.getMessageProperties().getDeliveryTag();
         try {
+            // Check server status before processing
+            ServerConfigDto serverConfig = ServerConfigHolder.getServerConfig();
+            if (serverConfig == null || !BaseConstant.STATUS_ACTIVE.equals(serverConfig.getStatus())) {
+                log.warn("Server status is not active, rejecting message for requeue");
+                channel.basicNack(deliveryTag, false, true);
+                return;
+            }
+
             String message = new String(amqpMessage.getBody(), StandardCharsets.UTF_8);
             BaseSendMsgForm<ConvertVideoForm> baseMessageForm = objectMapper.readValue(message, new TypeReference<>() {
             });
@@ -150,6 +157,8 @@ public class RabbitMQListener {
         try {
             log.warn("Start converting video ID: {}", videoId);
             UpdateVideoForm result = baseApiService.convertToHLS(videoId, videoPath);
+            ServerConfigDto serverConfig = ServerConfigHolder.getServerConfig();
+            result.setServerNumber(serverConfig.getServerNumber());
             rabbitService.handleSendMsg(
                     appName,
                     updateVideoQueue,

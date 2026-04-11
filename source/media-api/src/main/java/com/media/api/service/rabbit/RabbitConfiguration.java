@@ -1,5 +1,7 @@
 package com.media.api.service.rabbit;
 
+import com.media.api.component.ServerConfigHolder;
+import com.media.api.dto.ServerConfigDto;
 import org.springframework.amqp.core.AcknowledgeMode;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
@@ -16,9 +18,11 @@ import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
 public class RabbitConfiguration {
+    @Value("${rabbitmq.streaming.server-queue}")
+    private String streamingQueue;
 
-    @Value("${rabbitmq.media.queue}")
-    private String mediaQueue;
+    @Value("${server.number}")
+    private String serverNumber;
 
     @Value("${rabbitmq.convert.video.queue}")
     private String convertVideoQueue;
@@ -32,8 +36,8 @@ public class RabbitConfiguration {
     }
 
     @Bean
-    public Queue mediaQueue() {
-        return new Queue(mediaQueue, true);
+    public Queue streamingQueue() {
+        return new Queue(streamingQueue, true);
     }
 
     @Bean
