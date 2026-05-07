@@ -26,8 +26,6 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter {
     public void configure(WebSecurity web) throws Exception {
         web.ignoring().antMatchers(HttpMethod.OPTIONS);
         web.ignoring().antMatchers("/v2/api-docs", "/configuration/ui", "/swagger-resources/**", "/configuration/**", "/swagger-ui.html", "/webjars/**");
-        web.ignoring().antMatchers("/v1/file/public-download/**", "/v1/file/download/**");
-//        web.ignoring().antMatchers("/v1/file/download-video-resource/**");
     }
 
     @Bean

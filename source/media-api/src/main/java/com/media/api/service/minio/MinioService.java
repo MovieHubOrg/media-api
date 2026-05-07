@@ -3,9 +3,7 @@ package com.media.api.service.minio;
 import com.media.api.dto.ApiMessageDto;
 import com.media.api.dto.UploadFileDto;
 import com.media.api.form.UploadFileForm;
-import io.minio.GetObjectArgs;
-import io.minio.MinioClient;
-import io.minio.PutObjectArgs;
+import io.minio.*;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang.RandomStringUtils;
@@ -14,7 +12,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Objects;
@@ -80,5 +81,68 @@ public class MinioService {
                         .object(objectPath)
                         .build()
         );
+    }
+
+    public void downloadWithRetry(String bucket, String folder, String fileName, File dest) throws Exception {
+        int maxAttempts = 5;
+        int attempt = 0;
+
+        // Lấy file size từ MinIO trước
+        StatObjectResponse stat = minioClient.statObject(
+                StatObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(folder + "/" + fileName)
+                        .build()
+        );
+        long totalSize = stat.size();
+        log.info("MinIO file size: {} bytes", totalSize);
+
+        // Nếu file local đã đủ size → skip download
+        if (dest.exists() && dest.length() == totalSize) {
+            log.info("File already downloaded, skipping: {}", dest.getAbsolutePath());
+            return;
+        }
+
+        while (attempt < maxAttempts) {
+            attempt++;
+            long existingSize = dest.exists() ? dest.length() : 0;
+
+            // Nếu existingSize >= totalSize thì không cần download nữa
+            if (existingSize >= totalSize) {
+                log.info("File already complete at attempt {}", attempt);
+                return;
+            }
+
+            log.info("Download attempt {}/{}, resume from byte {}/{}",
+                    attempt, maxAttempts, existingSize, totalSize);
+
+            try {
+                GetObjectArgs args = GetObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(folder + "/" + fileName)
+                        .offset(existingSize)
+                        .length(totalSize - existingSize) // ← thêm length
+                        .build();
+
+                try (InputStream is = minioClient.getObject(args);
+                     OutputStream os = new FileOutputStream(dest, true)) {
+                    byte[] buffer = new byte[8 * 1024 * 1024];
+                    int bytesRead;
+                    while ((bytesRead = is.read(buffer)) != -1) {
+                        os.write(buffer, 0, bytesRead);
+                    }
+                }
+
+                log.warn("Download completed: {}", dest.getAbsolutePath());
+                return;
+
+            } catch (Exception e) {
+                log.warn("Download attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
+                if (attempt >= maxAttempts) {
+                    throw new RuntimeException("Download failed after " + maxAttempts + " attempts", e);
+                }
+                Thread.sleep(5000L * attempt);
+            }
+        }
     }
 }

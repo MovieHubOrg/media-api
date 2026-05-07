@@ -27,6 +27,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @Slf4j
@@ -239,9 +240,7 @@ public class BaseApiService {
             Files.createDirectories(tmpDir);
             tempInputFile = tmpDir.resolve(minioFileName).toFile();
 
-            try (InputStream inputStream = minioService.downloadFile(minioBucket, minioFolder, minioFileName)) {
-                Files.copy(inputStream, tempInputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            }
+            minioService.downloadWithRetry(minioBucket, minioFolder, minioFileName, tempInputFile);
             log.info("Downloaded temp file from MinIO: {}", tempInputFile.getAbsolutePath());
 
             String inputPath = tempInputFile.getAbsolutePath();
@@ -259,12 +258,11 @@ public class BaseApiService {
             Path outputFolder = Paths.get(rootDirectory + libraryFolder).toAbsolutePath().normalize();
             Files.createDirectories(outputFolder);
 
-            Map<String, Integer> bitrateMap = Map.of(
-                    "720", Math.min(bitrate, 5_000_000),
-                    "1080", Math.min(bitrate, 8_000_000),
-                    "1440", Math.min(bitrate, 16_000_000),
-                    "original", bitrate
-            );
+            Map<String, Integer> bitrateMap = new LinkedHashMap<>();
+            bitrateMap.put("720", Math.min(bitrate, 5_000_000));
+            bitrateMap.put("1080", Math.min(bitrate, 8_000_000));
+            bitrateMap.put("1440", Math.min(bitrate, 16_000_000));
+            bitrateMap.put("original", bitrate);
 
             FfmpegService.QualityTarget qualityTarget;
             if (resolution.height > 1440) qualityTarget = FfmpegService.QualityTarget.ORIGINAL;
@@ -284,8 +282,9 @@ public class BaseApiService {
             );
             log.info("FFmpeg command: {}", command);
 
-            Process process = new ProcessBuilder(command).start();
-
+            ProcessBuilder processBuilder = new ProcessBuilder(command);
+            processBuilder.redirectErrorStream(false);
+            Process process = processBuilder.start();
             try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
                 boolean hasError = false;
                 String line;
@@ -296,8 +295,13 @@ public class BaseApiService {
                         hasError = true;
                     }
                 }
-
-                int exitCode = process.waitFor();
+                boolean finished = process.waitFor(4, TimeUnit.HOURS);
+                if (!finished) {
+                    process.destroyForcibly();
+                    log.error("FFmpeg HLS timed out after 4 hours, process killed.");
+                    return data;
+                }
+                int exitCode = process.exitValue();
                 if (exitCode != 0 || hasError) {
                     log.error("FFmpeg failed. Exit code: {}", exitCode);
                     return data;
@@ -309,15 +313,20 @@ public class BaseApiService {
             Path thumbnailFolder = outputFolder.resolve("thumbnails");
             Files.createDirectories(thumbnailFolder);
 
-            ffmpegService.generateThumbnail(inputPath, thumbnailFolder.resolve("thumb_%06d.jpg").toString());
+            int secondsPerThumb = ffmpegService.generateThumbnail(inputPath, thumbnailFolder.resolve("thumb_%06d.jpg").toString(), duration);
             ffmpegService.generateSprite(outputFolder);
-            ffmpegService.generateVttFile(thumbnailFolder.toFile(), outputFolder.resolve("thumbnails.vtt").toFile());
+            ffmpegService.generateVttFile(thumbnailFolder.toFile(), outputFolder.resolve("thumbnails.vtt").toFile(), secondsPerThumb);
 
             log.info("Cleaning up thumbnail images...");
-            Files.walk(thumbnailFolder)
-                    .sorted(Comparator.reverseOrder())
-                    .map(Path::toFile)
-                    .forEach(File::delete);
+            try {
+                Files.walk(thumbnailFolder)
+                        .sorted(Comparator.reverseOrder())
+                        .map(Path::toFile)
+                        .forEach(File::delete);
+                log.info("Deleted thumbnail folder: {}", thumbnailFolder);
+            } catch (IOException e) {
+                log.warn("Failed to delete thumbnail folder: {}", thumbnailFolder, e);
+            }
 
             // ============ PHASE 7: RETURN RESULT ============
             data.setRelativeContentPath(libraryFolder + "/master.m3u8");
@@ -326,12 +335,12 @@ public class BaseApiService {
             data.setSpriteUrl(libraryFolder + "/sprite.jpg");
             data.setVttUrl(libraryFolder + "/thumbnails.vtt");
             data.setState(BaseConstant.VIDEO_LIBRARY_STATE_READY);
-
-        } catch (IOException e) {
-            log.error("[convertToHLS] IO error", e);
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("[convertToHLS] Interrupted", e);
+            log.error("[convertToHLS] Thread was interrupted", e);
+            // data.setState đã là ERROR từ đầu, return luôn
+        } catch (Exception e) {
+            log.error("[convertToHLS] Unexpected error", e);
         } finally {
             if (tempInputFile != null && tempInputFile.exists()) {
                 boolean deleted = tempInputFile.delete();
@@ -339,7 +348,6 @@ public class BaseApiService {
                 else log.warn("Cannot delete temp file: {}", tempInputFile.getAbsolutePath());
             }
         }
-
         return data;
     }
 }

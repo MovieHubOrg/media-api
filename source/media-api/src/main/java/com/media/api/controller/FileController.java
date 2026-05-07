@@ -14,7 +14,6 @@ import com.media.api.service.minio.MinioService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
@@ -25,7 +24,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -163,6 +161,7 @@ public class FileController extends ABasicController {
 
     // /LIBRARY/{videoId}/{resolution}/{fileName}
     @GetMapping("/download-video-resource/{folder}/{subFolder}/{subLevel}/{fileName:.+}")
+    @Cacheable("images")
     public ResponseEntity<Resource> downloadVideoResourceSubLevel(
             @PathVariable String folder,
             @PathVariable String subFolder,

@@ -144,9 +144,18 @@ public class FfmpegService {
         return command;
     }
 
-    public void generateThumbnail(String inputPath, String thumbnailOutputPattern) throws IOException, InterruptedException {
+    public int generateThumbnail(String inputPath, String thumbnailOutputPattern, long durationSeconds) throws IOException, InterruptedException {
 //        ffmpegPath, "-i", inputPath, "-vf", "fps=1,scale=iw/2:-1", outputDir + "/thumb_%06d.jpg"
         log.warn("Generating thumbnails...");
+
+        int secondsPerThumb;
+        if (durationSeconds <= 600) { // 10p
+            secondsPerThumb = 2;
+        } else if (durationSeconds <= 1800) { // 30p
+            secondsPerThumb = 5;
+        } else {
+            secondsPerThumb = 10;
+        }
 
         List<String> command = new ArrayList<>();
         command.add(ffmpegPath);
@@ -155,9 +164,9 @@ public class FfmpegService {
         command.add("-i");
         command.add(inputPath);
         command.add("-vf");
-        command.add("fps=1,scale=512:-1"); // iw = input width, chia đôi; -1 giữ tỉ lệ chiều cao
+        command.add("fps=1/" + secondsPerThumb + ",scale=320:-2"); // iw = input width, chia đôi; -2 giữ tỉ lệ chiều cao
         command.add("-q:v");
-        command.add("2");
+        command.add("3");
         command.add(thumbnailOutputPattern); // example: /path/to/thumbnails/thumb_%06d.jpg
         log.warn("command: {}", command);
 
@@ -184,6 +193,7 @@ public class FfmpegService {
         } else {
             log.warn("FFmpeg finished successfully.");
         }
+        return secondsPerThumb;
     }
 
     public void generateSprite(Path outputFolder) throws IOException, InterruptedException {
@@ -223,10 +233,11 @@ public class FfmpegService {
         Path relativeSpritePath = thumbnailFolder.relativize(spriteOutputPath);
         command.add(relativeSpritePath.toString().replace("\\", "/")); // Dùng đường dẫn tương đối hoặc ../sprite.jpg
         log.warn("command: {}", command);
+
         // 3. Chạy FFmpeg tại thư mục thumbnails
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(thumbnailFolder.toFile());
-        builder.redirectErrorStream(true);
+        builder.redirectErrorStream(false);
 
         Process process = builder.start();
 
@@ -250,10 +261,9 @@ public class FfmpegService {
         log.info("Sprite generated at: {}", spriteOutputPath);
     }
 
-    public void generateVttFile(File thumbnailFolder, File vttFile) throws IOException {
+    public void generateVttFile(File thumbnailFolder, File vttFile, int secondsPerThumb) throws IOException {
         log.warn("Generating VTT file...");
         int columns = 10;
-        int secondsPerThumb = 1;
 
         File[] thumbs = thumbnailFolder.listFiles((dir, name) -> name.matches("thumb_\\d{6}\\.jpg"));
         if (thumbs == null || thumbs.length == 0) {
@@ -276,7 +286,7 @@ public class FfmpegService {
                 int x = (i % columns) * tileWidth;
                 int y = (i / columns) * tileHeight;
 
-                int startSec = i * secondsPerThumb + 1;
+                int startSec = i * secondsPerThumb;
                 int endSec = startSec + secondsPerThumb;
 
                 String start = formatTime(startSec);

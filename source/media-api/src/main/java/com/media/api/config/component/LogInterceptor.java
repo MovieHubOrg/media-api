@@ -46,7 +46,7 @@ public class LogInterceptor implements HandlerInterceptor {
         }
         long startTime = System.currentTimeMillis();
         request.setAttribute("startTime", startTime);
-        log.info("Starting call url: [" + getUrl(request) + "]");
+        log.info("Starting call url: [{}]", getUrl(request));
         return true;
     }
 

@@ -18,9 +18,17 @@ public class MinioConfig {
 
     @Bean
     public MinioClient minioClient() {
-        return MinioClient.builder()
+        MinioClient client = MinioClient.builder()
                 .endpoint(endpoint)
                 .credentials(accessKey, secretKey)
                 .build();
+
+        client.setTimeout(
+                30 * 1000, // connectTimeout: 30 giây (ms)
+                5 * 60 * 1000, // writeTimeout: 5 phút  (ms)
+                30 * 60 * 1000 // readTimeout: 30 phút (ms)
+        );
+
+        return client;
     }
 }
