@@ -17,5 +17,6 @@ public class UpdateVideoForm {
     private Long duration;
     private String spriteUrl;
     private String vttUrl;
+    private String reason;
     private Integer serverNumber;
 }

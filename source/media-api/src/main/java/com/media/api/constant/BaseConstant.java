@@ -15,6 +15,10 @@ public class BaseConstant {
     public static final Integer VIDEO_LIBRARY_STATE_READY = 1;
     public static final Integer VIDEO_LIBRARY_STATE_ERROR = 2;
 
+    public static final String DOWNLOAD_TEMP_FILE_FAILED = "download_temp_file_failed";
+    public static final String CONVERT_FILE_FAILED = "convert_file_failed";
+    public static final String GENERATE_VTT_FAILED = "generate_vtt_failed";
+
     public static final String CMD_DELETE_VIDEO = "CMD_DELETE_VIDEO";
     public static final String CMD_CONVERT_VIDEO = "CMD_CONVERT_VIDEO";
     public static final String CMD_DONE_CONVERT_VIDEO = "CMD_DONE_CONVERT_VIDEO"; // send to tenant to update video library

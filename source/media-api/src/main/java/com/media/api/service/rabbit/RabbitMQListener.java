@@ -8,12 +8,10 @@ import com.media.api.constant.BaseConstant;
 import com.media.api.dto.ServerConfigDto;
 import com.media.api.form.ConvertVideoForm;
 import com.media.api.form.DeleteFolderForm;
-import com.media.api.form.DeleteListFileForm;
 import com.media.api.form.UpdateVideoForm;
 import com.media.api.form.rabbit.BaseSendMsgForm;
 import com.media.api.service.BaseApiService;
 import com.rabbitmq.client.Channel;
-import io.netty.util.concurrent.CompleteFuture;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.springframework.amqp.core.Message;
@@ -47,6 +45,9 @@ public class RabbitMQListener {
 
     @Value("${rabbitmq.convert.video.queue}")
     private String convertVideoQueue;
+
+    @Value("${rabbitmq.convert.video.server-queue}")
+    private String convertVideoServerQueue;
 
     @Value("${rabbitmq.update.video.queue}")
     private String updateVideoQueue;
@@ -104,6 +105,15 @@ public class RabbitMQListener {
 
     @RabbitListener(queues = "${rabbitmq.convert.video.queue}", containerFactory = "convertQueueFactory")
     public void receiveMessageFromConvertQueue(Message amqpMessage, Channel channel) {
+        processConvertMessage(amqpMessage, channel, convertVideoQueue);
+    }
+
+    @RabbitListener(queues = "${rabbitmq.convert.video.server-queue}", containerFactory = "convertQueueFactory")
+    public void receiveMessageFromServerConvertQueue(Message amqpMessage, Channel channel) {
+        processConvertMessage(amqpMessage, channel, convertVideoServerQueue);
+    }
+
+    private void processConvertMessage(Message amqpMessage, Channel channel, String queueName) {
         long deliveryTag = amqpMessage.getMessageProperties().getDeliveryTag();
         try {
             // Check server status before processing
@@ -117,7 +127,7 @@ public class RabbitMQListener {
             String message = new String(amqpMessage.getBody(), StandardCharsets.UTF_8);
             BaseSendMsgForm<ConvertVideoForm> baseMessageForm = objectMapper.readValue(message, new TypeReference<>() {
             });
-            System.out.println("======> Received message from " + convertVideoQueue + ": " + message);
+            System.out.println("======> Received message from " + queueName + ": " + message);
 
             if (!BaseConstant.CMD_CONVERT_VIDEO.equals(baseMessageForm.getCmd())) {
                 log.warn("Invalid message or missing tenantId");

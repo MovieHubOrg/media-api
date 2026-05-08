@@ -8,6 +8,7 @@ import com.media.api.form.UploadBase64Form;
 import com.media.api.form.UploadFileForm;
 import com.media.api.service.minio.MinioService;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -239,8 +240,13 @@ public class BaseApiService {
             Path tmpDir = Paths.get(rootDirectory, "LIBRARY", "tmp").toAbsolutePath().normalize();
             Files.createDirectories(tmpDir);
             tempInputFile = tmpDir.resolve(minioFileName).toFile();
-
-            minioService.downloadWithRetry(minioBucket, minioFolder, minioFileName, tempInputFile);
+            try {
+                minioService.downloadWithRetry(minioBucket, minioFolder, minioFileName, tempInputFile);
+            } catch (Exception e) {
+                data.setReason(BaseConstant.DOWNLOAD_TEMP_FILE_FAILED);
+                log.error("[convertToHLS] Download temp file failed", e);
+                return data;
+            }
             log.info("Downloaded temp file from MinIO: {}", tempInputFile.getAbsolutePath());
 
             String inputPath = tempInputFile.getAbsolutePath();
@@ -255,6 +261,7 @@ public class BaseApiService {
 
             // ============ PHASE 4: PREPARE HLS OUTPUT ============
             String libraryFolder = "/LIBRARY/" + videoId;
+            deleteFolder(libraryFolder); // Clean up old data if exists
             Path outputFolder = Paths.get(rootDirectory + libraryFolder).toAbsolutePath().normalize();
             Files.createDirectories(outputFolder);
 
@@ -299,11 +306,13 @@ public class BaseApiService {
                 if (!finished) {
                     process.destroyForcibly();
                     log.error("FFmpeg HLS timed out after 4 hours, process killed.");
+                    data.setReason(BaseConstant.CONVERT_FILE_FAILED);
                     return data;
                 }
                 int exitCode = process.exitValue();
                 if (exitCode != 0 || hasError) {
                     log.error("FFmpeg failed. Exit code: {}", exitCode);
+                    data.setReason(BaseConstant.CONVERT_FILE_FAILED);
                     return data;
                 }
             }
@@ -312,10 +321,15 @@ public class BaseApiService {
             // ============ PHASE 6: GENERATE THUMBNAILS, SPRITE & VTT ============
             Path thumbnailFolder = outputFolder.resolve("thumbnails");
             Files.createDirectories(thumbnailFolder);
-
-            int secondsPerThumb = ffmpegService.generateThumbnail(inputPath, thumbnailFolder.resolve("thumb_%06d.jpg").toString(), duration);
-            ffmpegService.generateSprite(outputFolder);
-            ffmpegService.generateVttFile(thumbnailFolder.toFile(), outputFolder.resolve("thumbnails.vtt").toFile(), secondsPerThumb);
+            try {
+                int secondsPerThumb = ffmpegService.generateThumbnail(inputPath, thumbnailFolder.resolve("thumb_%06d.jpg").toString(), duration);
+                ffmpegService.generateSprite(outputFolder);
+                ffmpegService.generateVttFile(thumbnailFolder.toFile(), outputFolder.resolve("thumbnails.vtt").toFile(), secondsPerThumb);
+            } catch (Exception e) {
+                data.setReason(BaseConstant.GENERATE_VTT_FAILED);
+                log.error("[convertToHLS] Generate thumbnails/sprite/vtt failed", e);
+                return data;
+            }
 
             log.info("Cleaning up thumbnail images...");
             try {
@@ -349,5 +363,20 @@ public class BaseApiService {
             }
         }
         return data;
+    }
+
+    private void deleteFolder(String folderPath) {
+        Path path = Paths.get(rootDirectory, folderPath).toAbsolutePath().normalize();
+        File folder = path.toFile();
+        if (folder.exists()) {
+            try {
+                FileUtils.deleteDirectory(folder);
+                log.info("Deleted folder: {}", path);
+            } catch (IOException e) {
+                log.warn("Failed to delete folder: {}", path, e);
+            }
+        } else {
+            log.warn("Folder not found: {}", path);
+        }
     }
 }

@@ -21,11 +21,11 @@ public class RabbitConfiguration {
     @Value("${rabbitmq.streaming.server-queue}")
     private String streamingQueue;
 
-    @Value("${server.number}")
-    private String serverNumber;
-
     @Value("${rabbitmq.convert.video.queue}")
     private String convertVideoQueue;
+
+    @Value("${rabbitmq.convert.video.server-queue}")
+    private String convertVideoServerQueue;
 
     @Value("${rabbitmq.update.video.queue}")
     private String updateVideoQueue;
@@ -43,6 +43,11 @@ public class RabbitConfiguration {
     @Bean
     public Queue convertVideoQueue() {
         return new Queue(convertVideoQueue, true);
+    }
+
+    @Bean
+    public Queue convertVideoServerQueue() {
+        return new Queue(convertVideoServerQueue, true);
     }
 
     @Bean
