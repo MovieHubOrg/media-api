@@ -3,6 +3,8 @@ package com.media.api.service;
 import com.media.api.constant.BaseConstant;
 import com.media.api.dto.ApiMessageDto;
 import com.media.api.dto.UploadFileDto;
+import com.media.api.exception.BadRequestException;
+import com.media.api.form.UpdateAudioForm;
 import com.media.api.form.UpdateVideoForm;
 import com.media.api.form.UploadBase64Form;
 import com.media.api.form.UploadFileForm;
@@ -243,7 +245,7 @@ public class BaseApiService {
             try {
                 minioService.downloadWithRetry(minioBucket, minioFolder, minioFileName, tempInputFile);
             } catch (Exception e) {
-                data.setReason(BaseConstant.DOWNLOAD_TEMP_FILE_FAILED);
+                data.setReason(BaseConstant.REASON_DOWNLOAD_TEMP_FILE_FAILED);
                 log.error("[convertToHLS] Download temp file failed", e);
                 return data;
             }
@@ -306,13 +308,13 @@ public class BaseApiService {
                 if (!finished) {
                     process.destroyForcibly();
                     log.error("FFmpeg HLS timed out after 4 hours, process killed.");
-                    data.setReason(BaseConstant.CONVERT_FILE_FAILED);
+                    data.setReason(BaseConstant.REASON_CONVERT_FILE_FAILED);
                     return data;
                 }
                 int exitCode = process.exitValue();
                 if (exitCode != 0 || hasError) {
                     log.error("FFmpeg failed. Exit code: {}", exitCode);
-                    data.setReason(BaseConstant.CONVERT_FILE_FAILED);
+                    data.setReason(BaseConstant.REASON_CONVERT_FILE_FAILED);
                     return data;
                 }
             }
@@ -326,7 +328,7 @@ public class BaseApiService {
                 ffmpegService.generateSprite(outputFolder);
                 ffmpegService.generateVttFile(thumbnailFolder.toFile(), outputFolder.resolve("thumbnails.vtt").toFile(), secondsPerThumb);
             } catch (Exception e) {
-                data.setReason(BaseConstant.GENERATE_VTT_FAILED);
+                data.setReason(BaseConstant.REASON_GENERATE_VTT_FAILED);
                 log.error("[convertToHLS] Generate thumbnails/sprite/vtt failed", e);
                 return data;
             }
@@ -363,6 +365,29 @@ public class BaseApiService {
             }
         }
         return data;
+    }
+
+    public UpdateAudioForm convertM3u8ToAudio(Long videoId) {
+        Path libraryFolder = Paths.get(rootDirectory, "LIBRARY", videoId.toString()).toAbsolutePath().normalize();
+        Path inputM3u8Path = libraryFolder.resolve("master.m3u8");
+        Path outputAudioPath = libraryFolder.resolve("audio.wav");
+
+        if (!Files.exists(inputM3u8Path)) {
+            throw new BadRequestException("master.m3u8 not found for videoId: " + videoId);
+        }
+
+        UpdateAudioForm result = new UpdateAudioForm();
+        result.setAudioState(BaseConstant.VIDEO_LIBRARY_STATE_READY);
+        result.setVideoId(videoId);
+        result.setAudioUrl("/LIBRARY/" + videoId + "/audio.wav");
+        try {
+            ffmpegService.convertM3u8ToAudio(inputM3u8Path.toString(), outputAudioPath.toString());
+        } catch (Exception e) {
+            result.setAudioState(BaseConstant.VIDEO_LIBRARY_STATE_ERROR);
+            result.setReason(BaseConstant.REASON_CONVERT_AUDIO_FAILED);
+            throw new RuntimeException("Failed to convert m3u8 to audio for videoId: " + videoId, e);
+        }
+        return result;
     }
 
     private void deleteFolder(String folderPath) {

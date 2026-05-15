@@ -1,13 +1,10 @@
 package com.media.api.service.rabbit;
 
-import com.media.api.component.ServerConfigHolder;
-import com.media.api.dto.ServerConfigDto;
 import org.springframework.amqp.core.AcknowledgeMode;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,6 +26,9 @@ public class RabbitConfiguration {
 
     @Value("${rabbitmq.update.video.queue}")
     private String updateVideoQueue;
+
+    @Value("${rabbitmq.subtitle.requests}")
+    private String subtitleRequestsQueue;
 
     @Bean
     public RabbitAdmin rabbitAdmin(ConnectionFactory connectionFactory) {
@@ -53,6 +53,11 @@ public class RabbitConfiguration {
     @Bean
     public Queue updateVideoQueue() {
         return new Queue(updateVideoQueue, true);
+    }
+
+    @Bean
+    public Queue subtitleRequestsQueue() {
+        return new Queue(subtitleRequestsQueue, true);
     }
 
     @Bean(name = "convertExecutor")

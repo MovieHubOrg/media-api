@@ -1,23 +1,24 @@
 package com.media.api.service.rabbit;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.media.api.component.ServerConfigHolder;
 import com.media.api.constant.BaseConstant;
 import com.media.api.dto.ServerConfigDto;
+import com.media.api.form.ConvertAudioForm;
 import com.media.api.form.ConvertVideoForm;
 import com.media.api.form.DeleteFolderForm;
-import com.media.api.form.UpdateVideoForm;
+import com.media.api.form.DoneProcessSubtitleForm;
 import com.media.api.form.rabbit.BaseSendMsgForm;
-import com.media.api.service.BaseApiService;
+import com.media.api.service.VideoService;
 import com.rabbitmq.client.Channel;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -28,8 +29,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
 
 @Component
 @Slf4j
@@ -37,8 +36,8 @@ public class RabbitMQListener {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @Value("${rabbitmq.app}")
-    private String appName;
+    @Autowired
+    private VideoService videoService;
 
     @Value("${rabbitmq.streaming.server-queue}")
     private String streamingQueue;
@@ -49,21 +48,8 @@ public class RabbitMQListener {
     @Value("${rabbitmq.convert.video.server-queue}")
     private String convertVideoServerQueue;
 
-    @Value("${rabbitmq.update.video.queue}")
-    private String updateVideoQueue;
-
-    @Autowired
-    private BaseApiService baseApiService;
-
-    @Autowired
-    private RabbitService rabbitService;
-
     @Value("${file.upload-dir}")
     private String rootDir;
-
-    @Autowired
-    @Qualifier("convertExecutor")
-    private Executor convertExecutor;
 
     @RabbitListener(queues = "${rabbitmq.streaming.server-queue}")
     public void receiveMessage(String message) {
@@ -103,85 +89,70 @@ public class RabbitMQListener {
         }
     }
 
-    @RabbitListener(queues = "${rabbitmq.convert.video.queue}", containerFactory = "convertQueueFactory")
-    public void receiveMessageFromConvertQueue(Message amqpMessage, Channel channel) {
-        processConvertMessage(amqpMessage, channel, convertVideoQueue);
-    }
-
-    @RabbitListener(queues = "${rabbitmq.convert.video.server-queue}", containerFactory = "convertQueueFactory")
-    public void receiveMessageFromServerConvertQueue(Message amqpMessage, Channel channel) {
-        processConvertMessage(amqpMessage, channel, convertVideoServerQueue);
-    }
-
-    private void processConvertMessage(Message amqpMessage, Channel channel, String queueName) {
+    @RabbitListener(
+            queues = {"${rabbitmq.convert.video.queue}", "${rabbitmq.convert.video.server-queue}"},
+            containerFactory = "convertQueueFactory"
+    )
+    public void receiveMessageFromConvertQueues(Message amqpMessage, Channel channel) {
         long deliveryTag = amqpMessage.getMessageProperties().getDeliveryTag();
+        String sourceQueue = amqpMessage.getMessageProperties().getConsumerQueue();
         try {
-            // Check server status before processing
-            ServerConfigDto serverConfig = ServerConfigHolder.getServerConfig();
-            if (serverConfig == null || !BaseConstant.STATUS_ACTIVE.equals(serverConfig.getStatus())) {
-                log.warn("Server status is not active, rejecting message for requeue");
-                channel.basicNack(deliveryTag, false, true);
-                return;
-            }
-
             String message = new String(amqpMessage.getBody(), StandardCharsets.UTF_8);
-            BaseSendMsgForm<ConvertVideoForm> baseMessageForm = objectMapper.readValue(message, new TypeReference<>() {
+            BaseSendMsgForm<JsonNode> baseMessageForm = objectMapper.readValue(message, new TypeReference<>() {
             });
-            System.out.println("======> Received message from " + queueName + ": " + message);
-
-            if (!BaseConstant.CMD_CONVERT_VIDEO.equals(baseMessageForm.getCmd())) {
-                log.warn("Invalid message or missing tenantId");
-                channel.basicAck(deliveryTag, false); // ACK để không retry
-                return;
+            log.warn("Received message from {}: {}", sourceQueue, message);
+            if (convertVideoQueue.equals(sourceQueue)) {
+                processConvertQueueCommand(baseMessageForm);
+            } else if (convertVideoServerQueue.equals(sourceQueue)) {
+                processServerConvertQueueCommand(baseMessageForm, sourceQueue);
+            } else {
+                log.warn("Unknown source queue '{}', ack and discard", sourceQueue);
             }
-
-            Long videoId = baseMessageForm.getData().getId();
-            String videoPath = baseMessageForm.getData().getContent();
-
-            CompletableFuture
-                    .runAsync(() -> convert(videoId, videoPath), convertExecutor)
-                    .whenComplete((ok, ex) -> {
-                        try {
-                            if (ex == null) {
-                                channel.basicAck(deliveryTag, false);
-                            } else {
-                                log.error("Error in long task", ex);
-                                channel.basicNack(deliveryTag, false, true);
-                            }
-                        } catch (IOException e) {
-                            log.error("Error when sending nack", ex);
-                        }
-
-                    });
-        } catch (Exception e) {
-            log.error("Error parsing or scheduling message", e);
+            channel.basicAck(deliveryTag, false);
+        } catch (IllegalArgumentException | JsonProcessingException e) {
+            log.error("Invalid message in {}, nack without requeue", sourceQueue, e);
             try {
-                channel.basicNack(deliveryTag, false, true); // Retry message
+                channel.basicNack(deliveryTag, false, false);
             } catch (IOException ex) {
-                log.error("Error when sending nack", ex);
+                log.error("Error sending nack", ex);
+            }
+        } catch (Exception e) {
+            log.error("Error processing message from {}, nack with requeue", sourceQueue, e);
+            try {
+                channel.basicNack(deliveryTag, false, true);
+            } catch (IOException ex) {
+                log.error("Error sending nack", ex);
             }
         }
     }
 
-    private void convert(Long videoId, String videoPath) {
-        try {
-            log.warn("Start converting video ID: {}", videoId);
-            UpdateVideoForm result = baseApiService.convertToHLS(videoId, videoPath);
-            ServerConfigDto serverConfig = ServerConfigHolder.getServerConfig();
-            result.setServerNumber(serverConfig.getServerNumber());
-            rabbitService.handleSendMsg(
-                    appName,
-                    updateVideoQueue,
-                    result,
-                    BaseConstant.CMD_DONE_CONVERT_VIDEO,
-                    null,
-                    null,
-                    null,
-                    null
-            );
-            log.warn("End converting video ID: {}", videoId);
-        } catch (Exception e) {
-            log.error("Error converting video ID: {}", videoId, e);
+    private void processConvertQueueCommand(BaseSendMsgForm<JsonNode> baseMessageForm) throws JsonProcessingException {
+        if (!BaseConstant.CMD_CONVERT_VIDEO.equals(baseMessageForm.getCmd())) {
+            throw new IllegalArgumentException("Unsupported cmd in convert queue: " + baseMessageForm.getCmd());
+        }
+
+        ConvertVideoForm convertVideoForm = objectMapper.treeToValue(baseMessageForm.getData(), ConvertVideoForm.class);
+        videoService.processConvertMessage(convertVideoForm);
+    }
+
+    private void processServerConvertQueueCommand(BaseSendMsgForm<JsonNode> baseMessageForm, String sourceQueue) throws JsonProcessingException {
+        String cmd = baseMessageForm.getCmd();
+        switch (cmd) {
+            case BaseConstant.CMD_CONVERT_VIDEO:
+                ConvertVideoForm convertVideoForm = objectMapper.treeToValue(baseMessageForm.getData(), ConvertVideoForm.class);
+                videoService.processConvertMessage(convertVideoForm);
+                break;
+            case BaseConstant.CMD_CONVERT_AUDIO:
+                ConvertAudioForm convertAudioForm = objectMapper.treeToValue(baseMessageForm.getData(), ConvertAudioForm.class);
+                videoService.processConvertAudioMessage(convertAudioForm);
+                break;
+            case BaseConstant.CMD_DONE_PROCESS_SUBTITLE:
+                DoneProcessSubtitleForm doneProcessSubtitleForm = objectMapper.treeToValue(baseMessageForm.getData(), DoneProcessSubtitleForm.class);
+                videoService.processDoneSubtitleMessage(doneProcessSubtitleForm);
+                break;
+            default:
+                log.warn("Unknown cmd '{}' in {}, ack and discard", cmd, sourceQueue);
+                break;
         }
     }
 }

@@ -9,6 +9,7 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -311,5 +312,51 @@ public class FfmpegService {
     private int getEvenWidth(int originalHeight, int originalWidth, int targetHeight) {
         int computedWidth = (targetHeight * originalWidth) / originalHeight;
         return computedWidth % 2 == 0 ? computedWidth : computedWidth + 1;
+    }
+
+    public void convertM3u8ToAudio(String inputM3u8Path, String outputAudioPath) throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add(ffmpegPath);
+        command.add("-y");
+        command.add("-loglevel");
+        command.add("error");
+        command.add("-i");
+        command.add(inputM3u8Path);
+        command.add("-vn");
+        command.add("-ar");
+        command.add("16000");
+        command.add("-ac");
+        command.add("1");
+        command.add("-c:a");
+        command.add("pcm_s16le");
+        command.add(outputAudioPath);
+        log.info("Converting m3u8 to audio with command: {}", command);
+
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
+        processBuilder.redirectErrorStream(false);
+        Process process = processBuilder.start();
+        try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+            boolean hasError = false;
+            String line;
+            while ((line = errorReader.readLine()) != null) {
+                log.warn("[FFmpeg AUDIO] {}", line);
+                String lower = line.toLowerCase();
+                if (lower.contains("error") || lower.contains("failed") || lower.contains("invalid")) {
+                    hasError = true;
+                }
+            }
+
+            boolean finished = process.waitFor(2, TimeUnit.HOURS);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new RuntimeException("FFmpeg audio conversion timed out after 2 hours.");
+            }
+
+            int exitCode = process.exitValue();
+            if (exitCode != 0 || hasError) {
+                throw new RuntimeException("FFmpeg audio conversion failed. Exit code: " + exitCode);
+            }
+        }
+        log.info("Audio file generated successfully: {}", outputAudioPath);
     }
 }

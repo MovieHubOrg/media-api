@@ -14,8 +14,6 @@ public class RabbitService {
     @Autowired
     private ObjectMapper objectMapper;
     @Autowired
-    private RestTemplate restTemplate;
-    @Autowired
     private RabbitSender rabbitSender;
 
     public <T> void handleSendMsg(String appName, String queueName, T data, String cmd, String subCmd, String responseCode, String token, String tenantId) {
@@ -27,6 +25,25 @@ public class RabbitService {
         form.setData(data);
         form.setToken(token);
         form.setTenantId(tenantId);
+        String msg;
+        try {
+            msg = objectMapper.writeValueAsString(form);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+
+        // create queue if existed
+        createQueueIfNotExist(queueName);
+
+        // push msg
+        rabbitSender.send(queueName, msg);
+    }
+
+    public <T> void handleSendMsg(String appName, String queueName, T data, String cmd) {
+        BaseSendMsgForm<T> form = new BaseSendMsgForm<>();
+        form.setApp(appName);
+        form.setCmd(cmd);
+        form.setData(data);
         String msg;
         try {
             msg = objectMapper.writeValueAsString(form);
