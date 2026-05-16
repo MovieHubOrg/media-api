@@ -129,6 +129,33 @@ public class VideoService {
         log.info("CMD_DONE_PROCESS_SUBTITLE: requested MinIO cleanup for videoId={}, vtt={}", videoId, fileUrl);
     }
 
+    public void processDeleteSubtitleMessage(DeleteSubtitleForm data) {
+        if (data == null || data.getVideoId() == null || data.getFileUrl() == null || data.getFileUrl().isBlank()) {
+            throw new BadRequestException("videoId and fileUrl are required to delete subtitle");
+        }
+
+        Long videoId = data.getVideoId();
+        Path subtitlePath = Paths.get(rootDir, data.getFileUrl()).toAbsolutePath().normalize();
+        Path libraryDir = Paths.get(rootDir, DIRECTORY_LIBRARY, videoId.toString()).toAbsolutePath().normalize();
+        if (!subtitlePath.startsWith(libraryDir)) {
+            throw new BadRequestException("Invalid fileUrl: path is outside the allowed directory");
+        }
+
+        try {
+            if (Files.deleteIfExists(subtitlePath)) {
+                log.info("CMD_DELETE_SUBTITLE: deleted subtitle, videoId={}, fileUrl={}, localPath={}",
+                        videoId, data.getFileUrl(), subtitlePath);
+            } else {
+                log.warn("CMD_DELETE_SUBTITLE: subtitle not found, videoId={}, fileUrl={}, localPath={}",
+                        videoId, data.getFileUrl(), subtitlePath);
+            }
+        } catch (Exception e) {
+            log.error("CMD_DELETE_SUBTITLE: failed to delete subtitle, videoId={}, fileUrl={}, localPath={}",
+                    videoId, data.getFileUrl(), subtitlePath, e);
+            throw new BadRequestException("Delete subtitle failed: " + e.getMessage());
+        }
+    }
+
     private Path getAudioFileByVideoId(Long videoId) {
         Path rootPath = Paths.get(rootDir).toAbsolutePath().normalize();
 

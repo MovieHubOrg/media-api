@@ -25,6 +25,7 @@ public class BaseConstant {
     public static final String REASON_DOWNLOAD_VTT_FILE_FAILED = "download_vtt_file_failed";
 
     public static final String CMD_DELETE_VIDEO = "CMD_DELETE_VIDEO";
+    public static final String CMD_DELETE_SUBTITLE = "CMD_DELETE_SUBTITLE";
     public static final String CMD_CONVERT_VIDEO = "CMD_CONVERT_VIDEO";
     public static final String CMD_CONVERT_AUDIO = "CMD_CONVERT_AUDIO";
     public static final String CMD_DONE_CONVERT_VIDEO = "CMD_DONE_CONVERT_VIDEO"; // send to tenant to update video library

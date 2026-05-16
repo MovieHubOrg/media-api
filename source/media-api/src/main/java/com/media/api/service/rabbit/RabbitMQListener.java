@@ -10,6 +10,7 @@ import com.media.api.dto.ServerConfigDto;
 import com.media.api.form.ConvertAudioForm;
 import com.media.api.form.ConvertVideoForm;
 import com.media.api.form.DeleteFolderForm;
+import com.media.api.form.DeleteSubtitleForm;
 import com.media.api.form.DoneProcessSubtitleForm;
 import com.media.api.form.rabbit.BaseSendMsgForm;
 import com.media.api.service.VideoService;
@@ -75,6 +76,10 @@ public class RabbitMQListener {
                             }
                         }
                     }
+                    break;
+                case BaseConstant.CMD_DELETE_SUBTITLE:
+                    DeleteSubtitleForm deleteSubtitleForm = objectMapper.treeToValue(baseMessageForm.getData(), DeleteSubtitleForm.class);
+                    videoService.processDeleteSubtitleMessage(deleteSubtitleForm);
                     break;
                 case BaseConstant.CMD_UPDATE_SERVER_CONFIG:
                     ServerConfigDto serverConfigDto = objectMapper.treeToValue(baseMessageForm.getData(), ServerConfigDto.class);
