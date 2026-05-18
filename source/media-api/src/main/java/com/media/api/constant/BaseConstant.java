@@ -32,6 +32,8 @@ public class BaseConstant {
     public static final String CMD_DONE_CONVERT_AUDIO = "CMD_DONE_CONVERT_AUDIO"; // send to tenant to update audio url
     public static final String CMD_PROCESS_SUBTITLE = "CMD_PROCESS_SUBTITLE";     // send to subtitle service to generate VTT
     public static final String CMD_DONE_PROCESS_SUBTITLE = "CMD_DONE_PROCESS_SUBTITLE";
+    public static final String CMD_TRANSLATE_SUBTITLE = "CMD_TRANSLATE_SUBTITLE";
+    public static final String CMD_DONE_TRANSLATE_SUBTITLE = "CMD_DONE_TRANSLATE_SUBTITLE";
     public static final String CMD_UPDATE_SERVER_CONFIG = "CMD_UPDATE_SERVER_CONFIG";
 
     private BaseConstant() {

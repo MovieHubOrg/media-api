@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -20,8 +19,6 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 
 @Service
@@ -90,6 +87,22 @@ public class MinioService {
         } catch (Exception e) {
             log.error("Error uploading generated audio to MinIO", e);
             throw new RuntimeException("Upload generated audio failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Upload source VTT to MinIO before asking the subtitle service to translate it.
+     */
+    public String uploadSubtitleForTranslation(Long videoId, String sourceLang, Path localVttPath) {
+        try {
+            String fileName = sourceLang + "_" + RandomStringUtils.randomAlphanumeric(10) + ".vtt";
+            String objectPath = "subtitles/" + videoId + "/" + fileName;
+            uploadToMinio(objectPath, localVttPath, "text/vtt");
+            log.info("Uploaded source subtitle to MinIO for translation: {}/{}", bucket, objectPath);
+            return bucket + "/" + objectPath;
+        } catch (Exception e) {
+            log.error("Error uploading source subtitle to MinIO for translation", e);
+            throw new RuntimeException("Upload source subtitle failed: " + e.getMessage(), e);
         }
     }
 

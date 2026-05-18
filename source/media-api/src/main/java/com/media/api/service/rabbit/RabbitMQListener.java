@@ -12,6 +12,8 @@ import com.media.api.form.ConvertVideoForm;
 import com.media.api.form.DeleteFolderForm;
 import com.media.api.form.DeleteSubtitleForm;
 import com.media.api.form.DoneProcessSubtitleForm;
+import com.media.api.form.DoneTranslateSubtitleForm;
+import com.media.api.form.TranslateSubtitleForm;
 import com.media.api.form.rabbit.BaseSendMsgForm;
 import com.media.api.service.VideoService;
 import com.rabbitmq.client.Channel;
@@ -154,6 +156,14 @@ public class RabbitMQListener {
             case BaseConstant.CMD_DONE_PROCESS_SUBTITLE:
                 DoneProcessSubtitleForm doneProcessSubtitleForm = objectMapper.treeToValue(baseMessageForm.getData(), DoneProcessSubtitleForm.class);
                 videoService.processDoneSubtitleMessage(doneProcessSubtitleForm);
+                break;
+            case BaseConstant.CMD_TRANSLATE_SUBTITLE:
+                TranslateSubtitleForm translateSubtitleData = objectMapper.treeToValue(baseMessageForm.getData(), TranslateSubtitleForm.class);
+                videoService.processTranslateSubtitleMessage(translateSubtitleData);
+                break;
+            case BaseConstant.CMD_DONE_TRANSLATE_SUBTITLE:
+                DoneTranslateSubtitleForm doneTranslateSubtitleForm = objectMapper.treeToValue(baseMessageForm.getData(), DoneTranslateSubtitleForm.class);
+                videoService.processDoneTranslateSubtitleMessage(doneTranslateSubtitleForm);
                 break;
             default:
                 log.warn("Unknown cmd '{}' in {}, ack and discard", cmd, sourceQueue);
