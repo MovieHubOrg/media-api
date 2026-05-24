@@ -7,8 +7,10 @@ import com.media.api.form.DeleteFileForm;
 import com.media.api.form.DeleteListFileForm;
 import com.media.api.form.UploadBase64Form;
 import com.media.api.form.UploadFileForm;
+import com.media.api.form.UploadSubtitleForm;
 import com.media.api.jwt.BaseJwt;
 import com.media.api.service.BaseApiService;
+import com.media.api.service.VideoService;
 import com.media.api.service.impl.UserServiceImpl;
 import com.media.api.service.minio.MinioService;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +20,7 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -45,6 +48,9 @@ public class FileController extends ABasicController {
     @Autowired
     private MinioService minioService;
 
+    @Autowired
+    private VideoService videoService;
+
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ApiMessageDto<UploadFileDto> upload(@Valid UploadFileForm uploadFileForm, BindingResult bindingResult) {
         BaseJwt jwt = getSessionFromToken();
@@ -67,6 +73,7 @@ public class FileController extends ABasicController {
     }
 
     @PostMapping(value = "/upload-video", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasRole('FILE_U')")
     public ApiMessageDto<UploadFileDto> uploadVideo(@Valid UploadFileForm uploadFileForm, BindingResult bindingResult) {
         BaseJwt jwt = getSessionFromToken();
         if (jwt == null || jwt.getUserKind() == null) {
@@ -76,6 +83,12 @@ public class FileController extends ABasicController {
             return result;
         }
         return minioService.storeVideo(uploadFileForm);
+    }
+
+    @PostMapping(value = "/upload-subtitle", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasRole('FILE_U')")
+    public ApiMessageDto<UploadFileDto> uploadSubtitle(@Valid UploadSubtitleForm uploadSubtitleForm, BindingResult bindingResult) {
+        return makeSuccessResponse(videoService.uploadSubtitle(uploadSubtitleForm.getVideoId(), uploadSubtitleForm.getFile()), "Upload subtitle success");
     }
 
     @GetMapping("/download-video/{bucket}/{folder}/{fileName:.+}")

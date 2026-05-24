@@ -18,6 +18,9 @@ public class BaseConstant {
     public static final Integer VIDEO_LIBRARY_STATE_READY = 1;
     public static final Integer VIDEO_LIBRARY_STATE_ERROR = 2;
 
+    public static final Integer SOURCE_TYPE_INTERNAL = 1;
+    public static final Integer SOURCE_TYPE_EXTERNAL = 2;
+
     public static final String REASON_DOWNLOAD_TEMP_FILE_FAILED = "download_temp_file_failed";
     public static final String REASON_CONVERT_FILE_FAILED = "convert_file_failed";
     public static final String REASON_GENERATE_VTT_FAILED = "generate_vtt_failed";

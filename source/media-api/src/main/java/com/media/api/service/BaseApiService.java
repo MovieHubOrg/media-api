@@ -4,10 +4,7 @@ import com.media.api.constant.BaseConstant;
 import com.media.api.dto.ApiMessageDto;
 import com.media.api.dto.UploadFileDto;
 import com.media.api.exception.BadRequestException;
-import com.media.api.form.UpdateAudioForm;
-import com.media.api.form.UpdateVideoForm;
-import com.media.api.form.UploadBase64Form;
-import com.media.api.form.UploadFileForm;
+import com.media.api.form.*;
 import com.media.api.service.minio.MinioService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
@@ -367,13 +364,32 @@ public class BaseApiService {
         return data;
     }
 
-    public UpdateAudioForm convertM3u8ToAudio(Long videoId) {
+    public UpdateAudioForm convertM3u8ToAudio(ConvertAudioForm convertAudioForm) {
+        Long videoId = convertAudioForm.getVideoId();
+        Integer sourceType = convertAudioForm.getSourceType();
+
         Path libraryFolder = Paths.get(rootDirectory, "LIBRARY", videoId.toString()).toAbsolutePath().normalize();
-        Path inputM3u8Path = libraryFolder.resolve("master.m3u8");
         Path outputAudioPath = libraryFolder.resolve("audio.wav");
 
-        if (!Files.exists(inputM3u8Path)) {
-            throw new BadRequestException("master.m3u8 not found for videoId: " + videoId);
+        String inputSource;
+
+        if (Objects.equals(sourceType, BaseConstant.SOURCE_TYPE_EXTERNAL)) {
+            String content = convertAudioForm.getContent();
+            if (content == null || !content.startsWith("https://") || !content.contains(".m3u8")) {
+                throw new BadRequestException("External source must be a valid HTTPS m3u8 URL for videoId: " + videoId);
+            }
+            inputSource = content;
+            try {
+                Files.createDirectories(libraryFolder);
+            } catch (IOException e) {
+                throw new RuntimeException("Cannot create library folder for videoId: " + videoId, e);
+            }
+        } else {
+            Path inputM3u8Path = libraryFolder.resolve("master.m3u8");
+            if (!Files.exists(inputM3u8Path)) {
+                throw new BadRequestException("master.m3u8 not found for videoId: " + videoId);
+            }
+            inputSource = inputM3u8Path.toString();
         }
 
         UpdateAudioForm result = new UpdateAudioForm();
@@ -381,7 +397,7 @@ public class BaseApiService {
         result.setVideoId(videoId);
         result.setAudioUrl("/LIBRARY/" + videoId + "/audio.wav");
         try {
-            ffmpegService.convertM3u8ToAudio(inputM3u8Path.toString(), outputAudioPath.toString());
+            ffmpegService.convertM3u8ToAudio(inputSource, outputAudioPath.toString());
         } catch (Exception e) {
             result.setAudioState(BaseConstant.VIDEO_LIBRARY_STATE_ERROR);
             result.setReason(BaseConstant.REASON_CONVERT_AUDIO_FAILED);

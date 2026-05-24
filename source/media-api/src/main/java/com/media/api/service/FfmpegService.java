@@ -320,6 +320,14 @@ public class FfmpegService {
         command.add("-y");
         command.add("-loglevel");
         command.add("error");
+
+        if (inputM3u8Path.startsWith("https://")) {
+            command.add("-allowed_extensions");
+            command.add("ALL");
+            command.add("-protocol_whitelist");
+            command.add("file,http,https,tcp,tls,crypto");
+        }
+
         command.add("-i");
         command.add(inputM3u8Path);
         command.add("-vn");

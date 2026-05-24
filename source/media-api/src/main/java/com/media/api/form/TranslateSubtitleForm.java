@@ -11,4 +11,5 @@ public class TranslateSubtitleForm {
     private String sourceLang;
     private String destLang;
     private String fileUrl;
+    private Integer serverNumber;
 }

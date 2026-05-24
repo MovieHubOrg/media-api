@@ -11,4 +11,6 @@ import lombok.Setter;
 @AllArgsConstructor
 public class ConvertAudioForm {
     private Long videoId;
+    private String content;
+    private Integer sourceType;
 }
