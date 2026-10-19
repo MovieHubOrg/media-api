@@ -47,20 +47,20 @@ public class FfmpegService {
         List<String> command = new ArrayList<>();
 
         command.add(ffmpegPath);
-        command.add("-y");
+        command.add("-y");                    // Ghi đè file output nếu đã tồn tại
         command.add("-loglevel");
-        command.add("error");
+        command.add("error");                 // Chỉ log lỗi
 //        command.add("info");
         command.add("-i");
-        command.add(inputPath);
+        command.add(inputPath);               // File input
         command.add("-preset");
-        command.add("fast");
+        command.add("fast");                  // Tốc độ encode nhanh, đánh đổi nén
         command.add("-g");
-        command.add("48");
+        command.add("48");                    // Khoảng cách giữa 2 keyframe (GOP size)
         command.add("-crf");
-        command.add("23");
+        command.add("23");                    // Mức chất lượng video (số nhỏ hơn = chất lượng cao hơn)
         command.add("-sc_threshold");
-        command.add("0");
+        command.add("0");                     // Tắt phát hiện đổi cảnh để giữ GOP cố định (phục vụ HLS)
 
         StringBuilder varMap = new StringBuilder();
 
@@ -73,28 +73,28 @@ public class FfmpegService {
 
             // Map video và audio (chung cho mọi chất lượng)
             command.add("-map");
-            command.add("0:v:0");
+            command.add("0:v:0");                 // Chọn stream video số 0 của input
             if (hasAudio) {
                 command.add("-map");
-                command.add("0:a:0");
+                command.add("0:a:0");             // Chọn stream audio số 0 của input
             }
 
             // Video encoding config
             command.add("-s:v:" + i);
-            command.add(targetWidth + "x" + targetHeight);
+            command.add(targetWidth + "x" + targetHeight); // Độ phân giải output cho level thứ i
             command.add("-c:v:" + i);
-            command.add("libx264");
+            command.add("libx264");                        // Codec video H.264
 
             int bitrateKbps = bitrate / 1000;
             int maxrateKbps = (int) (bitrateKbps * 1.07);
             int bufsizeKbps = bitrateKbps * 2;
 
             command.add("-b:v:" + i);
-            command.add(bitrateKbps + "k");
+            command.add(bitrateKbps + "k");        // Bitrate video mục tiêu
             command.add("-maxrate:v:" + i);
-            command.add(maxrateKbps + "k");
+            command.add(maxrateKbps + "k");        // Bitrate tối đa (cho phép vượt nhẹ so với target)
             command.add("-bufsize:v:" + i);
-            command.add(bufsizeKbps + "k");
+            command.add(bufsizeKbps + "k");        // Kích thước buffer cho VBV rate control
 
             // Audio encoding config
             if (hasAudio) {
@@ -108,11 +108,11 @@ public class FfmpegService {
                 }
 
                 command.add("-c:a:" + i);
-                command.add("aac");
+                command.add("aac");                    // Codec audio AAC
                 command.add("-b:a:" + i);
-                command.add(audioBitrate + "k");
+                command.add(audioBitrate + "k");       // Bitrate audio theo level
                 command.add("-ac");
-                command.add("2");
+                command.add("2");                      // Số kênh audio (stereo)
             }
 
             // var_stream_map entry
@@ -125,22 +125,22 @@ public class FfmpegService {
 
         // HLS options
         command.add("-var_stream_map");
-        command.add(varMap.toString().trim());
+        command.add(varMap.toString().trim());   // Danh sách các variant stream (video/audio theo từng level)
         command.add("-master_pl_name");
-        command.add("master.m3u8");
+        command.add("master.m3u8");               // Tên file playlist tổng (master)
         command.add("-f");
-        command.add("hls");
+        command.add("hls");                       // Định dạng output là HLS
         command.add("-hls_time");
-        command.add("15");
+        command.add("15");                        // Độ dài mỗi segment (giây)
         command.add("-hls_list_size");
-        command.add("0");
+        command.add("0");                         // 0 = giữ lại toàn bộ segment trong playlist (VOD)
         command.add("-hls_flags");
-        command.add("independent_segments");
+        command.add("independent_segments");      // Mỗi segment có thể decode độc lập
         command.add("-hls_segment_type");
-        command.add("mpegts");
+        command.add("mpegts");                    // Định dạng container cho từng segment
         command.add("-hls_segment_filename");
-        command.add(outputSegmentPath);
-        command.add(outputPath);
+        command.add(outputSegmentPath);           // Pattern đặt tên file segment
+        command.add(outputPath);                  // Đường dẫn file playlist theo level
 
         return command;
     }
@@ -161,13 +161,13 @@ public class FfmpegService {
         List<String> command = new ArrayList<>();
         command.add(ffmpegPath);
         command.add("-loglevel");
-        command.add("error");
+        command.add("error");                 // Chỉ log lỗi
         command.add("-i");
-        command.add(inputPath);
+        command.add(inputPath);               // File video input
         command.add("-vf");
-        command.add("fps=1/" + secondsPerThumb + ",scale=320:-2"); // iw = input width, chia đôi; -2 giữ tỉ lệ chiều cao
+        command.add("fps=1/" + secondsPerThumb + ",scale=320:-2"); // Lấy 1 frame mỗi secondsPerThumb giây, resize width=320, -2 giữ tỉ lệ chiều cao
         command.add("-q:v");
-        command.add("3");
+        command.add("3");                     // Chất lượng ảnh JPEG (số nhỏ hơn = chất lượng cao hơn)
         command.add(thumbnailOutputPattern); // example: /path/to/thumbnails/thumb_%06d.jpg
         log.warn("command: {}", command);
 
@@ -218,17 +218,17 @@ public class FfmpegService {
         command.add(ffmpegPath);              // Ví dụ: "ffmpeg"
         command.add("-y");                    // Ghi đè nếu có
         command.add("-loglevel");
-        command.add("error");
+        command.add("error");                 // Chỉ log lỗi
         command.add("-framerate");
-        command.add("1");
+        command.add("1");                     // Đọc lần lượt các ảnh input với tốc độ 1 ảnh/giây
         command.add("-i");
         command.add("thumb_%06d.jpg");        // Input: các ảnh thumbnail trong thư mục hiện tại
         command.add("-filter_complex");
-        command.add("tile=" + columns + "x" + rows);
+        command.add("tile=" + columns + "x" + rows); // Ghép tất cả ảnh thành lưới columns x rows
         command.add("-frames:v");
-        command.add("1");
+        command.add("1");                     // Chỉ xuất 1 frame (ảnh sprite duy nhất)
         command.add("-update");
-        command.add("1");
+        command.add("1");                     // Cho phép ghi đè liên tục lên cùng 1 file output ảnh
 
         // Ghi ra file sprite.jpg ở thư mục cha (outputFolder), vì working dir là thumbnails
         Path relativeSpritePath = thumbnailFolder.relativize(spriteOutputPath);
@@ -317,27 +317,27 @@ public class FfmpegService {
     public void convertM3u8ToAudio(String inputM3u8Path, String outputAudioPath) throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(ffmpegPath);
-        command.add("-y");
+        command.add("-y");                    // Ghi đè file output nếu đã tồn tại
         command.add("-loglevel");
-        command.add("error");
+        command.add("error");                 // Chỉ log lỗi
 
         if (inputM3u8Path.startsWith("https://")) {
             command.add("-allowed_extensions");
-            command.add("ALL");
+            command.add("ALL");               // Cho phép mọi phần mở rộng file trong playlist HLS
             command.add("-protocol_whitelist");
-            command.add("file,http,https,tcp,tls,crypto");
+            command.add("file,http,https,tcp,tls,crypto"); // Các protocol được phép khi đọc m3u8 từ URL
         }
 
         command.add("-i");
-        command.add(inputM3u8Path);
-        command.add("-vn");
+        command.add(inputM3u8Path);            // File/URL playlist m3u8 input
+        command.add("-vn");                    // Bỏ qua stream video, chỉ lấy audio
         command.add("-ar");
-        command.add("16000");
+        command.add("16000");                  // Tần số lấy mẫu audio (Hz)
         command.add("-ac");
-        command.add("1");
+        command.add("1");                      // Số kênh audio (mono)
         command.add("-c:a");
-        command.add("pcm_s16le");
-        command.add(outputAudioPath);
+        command.add("pcm_s16le");              // Codec audio PCM 16-bit little-endian (WAV)
+        command.add(outputAudioPath);          // Đường dẫn file audio output
         log.info("Converting m3u8 to audio with command: {}", command);
 
         ProcessBuilder processBuilder = new ProcessBuilder(command);

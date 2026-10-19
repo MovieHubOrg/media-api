@@ -3,17 +3,14 @@ package com.media.api.controller;
 import com.media.api.constant.BaseConstant;
 import com.media.api.dto.ApiMessageDto;
 import com.media.api.dto.UploadFileDto;
-import com.media.api.form.DeleteFileForm;
-import com.media.api.form.DeleteListFileForm;
-import com.media.api.form.UploadBase64Form;
-import com.media.api.form.UploadFileForm;
-import com.media.api.form.UploadSubtitleForm;
+import com.media.api.form.*;
 import com.media.api.jwt.BaseJwt;
 import com.media.api.service.BaseApiService;
 import com.media.api.service.VideoService;
 import com.media.api.service.impl.UserServiceImpl;
 import com.media.api.service.minio.MinioService;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
@@ -30,6 +27,7 @@ import javax.validation.Valid;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
@@ -156,8 +154,8 @@ public class FileController extends ABasicController {
 
     @GetMapping("/download/{folder}/{fileName:.+}")
     @Cacheable("images")
-    public ResponseEntity<Resource> downloadFile(@PathVariable String folder, @PathVariable String fileName, HttpServletRequest request) throws FileNotFoundException {
-        return getResource(folder, fileName, request, false, false);
+    public ResponseEntity<Resource> downloadFile(@PathVariable String folder, @PathVariable String fileName, @RequestParam(required = false) String downloadFileName, HttpServletRequest request) throws FileNotFoundException {
+        return getResource(folder, fileName, downloadFileName, false, false);
     }
 
     // /LIBRARY/{videoId}/{fileName}
@@ -174,7 +172,6 @@ public class FileController extends ABasicController {
 
     // /LIBRARY/{videoId}/{resolution}/{fileName}
     @GetMapping("/download-video-resource/{folder}/{subFolder}/{subLevel}/{fileName:.+}")
-    @Cacheable("images")
     public ResponseEntity<Resource> downloadVideoResourceSubLevel(
             @PathVariable String folder,
             @PathVariable String subFolder,
@@ -211,6 +208,62 @@ public class FileController extends ABasicController {
                 .body(resource);
     }
 
+    private ResponseEntity<Resource> getResource(
+            String folder,
+            String fileName,
+            String downloadFileName,
+            boolean tenantLocation,
+            boolean isLibrary
+    ) {
+        Resource resource = baseApiService.loadFileAsResource(
+                folder,
+                fileName,
+                tenantLocation,
+                isLibrary
+        );
+
+        if (resource == null || !resource.exists()) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "File not found"
+            );
+        }
+
+        MediaType mediaType = MediaTypeFactory.getMediaType(resource)
+                .or(() -> MediaTypeFactory.getMediaType(fileName))
+                .orElseGet(() -> {
+                    try {
+                        String detected = Files.probeContentType(
+                                resource.getFile().toPath()
+                        );
+
+                        return detected != null
+                                ? MediaType.parseMediaType(detected)
+                                : MediaType.APPLICATION_OCTET_STREAM;
+                    } catch (IOException e) {
+                        return MediaType.APPLICATION_OCTET_STREAM;
+                    }
+                });
+
+        String responseFileName = resolveDownloadFileName(
+                downloadFileName,
+                resource.getFilename()
+        );
+
+        assert responseFileName != null;
+        String contentDisposition = ContentDisposition
+                .builder("attachment")
+                .filename(responseFileName, StandardCharsets.UTF_8)
+                .build()
+                .toString();
+
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.maxAge(7776000, TimeUnit.SECONDS))
+                .contentType(mediaType)
+                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
+                .body(resource);
+    }
+
     @PostMapping(value = "/delete-file", produces = MediaType.APPLICATION_JSON_VALUE)
     public ApiMessageDto<String> deleteFile(@Valid @RequestBody DeleteFileForm form, BindingResult bindingResult) {
         String tenantId = userService.tenantId.get();
@@ -236,4 +289,44 @@ public class FileController extends ABasicController {
         return apiMessageDto;
     }
 
+    private String sanitizeFileName(String fileName) {
+        String sanitized = fileName
+                .replaceAll("[\\\\/:*?\"<>|\\r\\n]", "-")
+                .trim();
+
+        if (sanitized.isBlank()) {
+            return "download";
+        }
+
+        return sanitized;
+    }
+
+    private String resolveDownloadFileName(
+            String downloadName,
+            String storedFileName
+    ) {
+        String actualFileName = StringUtils.isNotBlank(storedFileName)
+                ? storedFileName
+                : "download";
+
+        String actualExtension = FilenameUtils.getExtension(actualFileName);
+
+        if (StringUtils.isBlank(downloadName)) {
+            return sanitizeFileName(actualFileName);
+        }
+
+        String safeDownloadName = sanitizeFileName(downloadName);
+
+        String baseName = FilenameUtils.getBaseName(safeDownloadName);
+
+        if (StringUtils.isBlank(baseName)) {
+            baseName = "download";
+        }
+
+        if (StringUtils.isBlank(actualExtension)) {
+            return baseName;
+        }
+
+        return baseName + "." + actualExtension;
+    }
 }
