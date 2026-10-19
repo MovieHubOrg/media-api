@@ -1,0 +1,272 @@
+package com.media.api.service;
+
+import com.media.api.component.ServerConfigHolder;
+import com.media.api.constant.BaseConstant;
+import com.media.api.dto.UploadFileDto;
+import com.media.api.dto.ServerConfigDto;
+import com.media.api.exception.BadRequestException;
+import com.media.api.form.*;
+import com.media.api.service.minio.MinioService;
+import com.media.api.service.rabbit.RabbitService;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.FilenameUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Objects;
+
+import static com.media.api.constant.BaseConstant.*;
+
+@Service
+@Slf4j
+public class VideoService {
+    @Value("${rabbitmq.app}")
+    private String appName;
+
+    @Value("${rabbitmq.update.video.queue}")
+    private String updateVideoQueue;
+
+    @Value("${rabbitmq.subtitle.requests}")
+    private String subtitleRequestsQueue;
+
+    @Value("${server.number}")
+    private Integer serverNumber;
+
+    @Value("${file.upload-dir}")
+    private String rootDir;
+
+    @Autowired
+    private BaseApiService baseApiService;
+
+    @Autowired
+    private MinioService minioService;
+
+    @Autowired
+    private RabbitService rabbitService;
+
+    private ServerConfigDto validateServerActive() {
+        ServerConfigDto serverConfig = ServerConfigHolder.getServerConfig();
+        if (serverConfig == null || !BaseConstant.STATUS_ACTIVE.equals(serverConfig.getStatus())) {
+            throw new BadRequestException("Server status is not active");
+        }
+        return serverConfig;
+    }
+
+    public void processConvertMessage(ConvertVideoForm convertVideoForm) {
+        ServerConfigDto serverConfig = validateServerActive();
+        Long videoId = convertVideoForm.getId();
+        String videoPath = convertVideoForm.getContent();
+
+        log.info("Start converting video ID: {}", videoId);
+        UpdateVideoForm result = baseApiService.convertToHLS(videoId, videoPath);
+        result.setServerNumber(serverConfig.getServerNumber());
+        rabbitService.handleSendMsg(appName, updateVideoQueue, result, BaseConstant.CMD_DONE_CONVERT_VIDEO);
+        log.info("End converting video ID: {}", videoId);
+    }
+
+    public void processConvertAudioMessage(ConvertAudioForm convertAudioForm) {
+        validateServerActive();
+        Long videoId = convertAudioForm.getVideoId();
+
+        log.info("Start converting m3u8 to audio for video ID: {}", videoId);
+        UpdateAudioForm result = baseApiService.convertM3u8ToAudio(convertAudioForm);
+        rabbitService.handleSendMsg(appName, updateVideoQueue, result, CMD_DONE_CONVERT_AUDIO);
+        log.info("End converting m3u8 to audio for video ID: {}, audioUrl: {}", videoId, result.getAudioUrl());
+
+        if (Objects.equals(result.getAudioState(), VIDEO_LIBRARY_STATE_READY)) {
+            Path audioPath = getAudioFileByVideoId(videoId);
+            String fileUrl = minioService.uploadGeneratedAudioForSubtitle(videoId, audioPath);
+            SubTitleRequestForm subtitlePayload = new SubTitleRequestForm(videoId, fileUrl, serverNumber);
+            rabbitService.handleSendMsg(appName, subtitleRequestsQueue, subtitlePayload, CMD_PROCESS_SUBTITLE);
+            log.info("Sent subtitle request for videoId={}, fileUrl={}", videoId, fileUrl);
+        }
+    }
+
+    public void processDoneSubtitleMessage(DoneProcessSubtitleForm form) {
+        Long videoId = form.getVideoId();
+        if (Objects.equals(form.getState(), VIDEO_LIBRARY_STATE_ERROR)) {
+            log.warn("CMD_DONE_PROCESS_SUBTITLE: convert error, videoId={}, fileUrl={}, language={}, reason={}",
+                    videoId, form.getFileUrl(), form.getLanguage(), form.getReason());
+            minioService.deleteGeneratedAudioForSubtitle(videoId);
+            rabbitService.handleSendMsg(appName, updateVideoQueue, form, CMD_DONE_PROCESS_SUBTITLE);
+            return;
+        }
+
+        String minioFileUrl = minioService.normalizeObjectFileUrl(form.getFileUrl().trim());
+        try {
+            String localFileUrl = downloadSubtitleToLibrary(videoId, minioFileUrl, form.getLanguage(), CMD_DONE_PROCESS_SUBTITLE);
+            form.setFileUrl(localFileUrl);
+        } catch (Exception e) {
+            log.error("CMD_DONE_PROCESS_SUBTITLE: MinIO download failed for videoId={}, fileUrl={}", videoId, minioFileUrl, e);
+            form.setState(VIDEO_LIBRARY_STATE_ERROR);
+            form.setReason(REASON_DOWNLOAD_VTT_FILE_FAILED);
+            rabbitService.handleSendMsg(appName, updateVideoQueue, form, CMD_DONE_PROCESS_SUBTITLE);
+            minioService.deleteGeneratedAudioForSubtitle(videoId);
+            return;
+        }
+
+        rabbitService.handleSendMsg(appName, updateVideoQueue, form, CMD_DONE_PROCESS_SUBTITLE);
+        log.info("CMD_DONE_PROCESS_SUBTITLE: sent update to updateVideoQueue for videoId={}", videoId);
+
+        minioService.deleteObjectByFileUrl(minioFileUrl);
+        minioService.deleteGeneratedAudioForSubtitle(videoId);
+        log.info("CMD_DONE_PROCESS_SUBTITLE: requested MinIO cleanup for videoId={}, vtt={}", videoId, minioFileUrl);
+    }
+
+    public void processDoneTranslateSubtitleMessage(DoneTranslateSubtitleForm form) {
+        Long videoId = form.getVideoId();
+        if (Objects.equals(form.getState(), VIDEO_LIBRARY_STATE_ERROR)) {
+            log.warn("CMD_DONE_TRANSLATE_SUBTITLE: translate error, videoId={}, subtitleId={}, fileUrl={}, language={}, reason={}",
+                    videoId, form.getSubtitleId(), form.getFileUrl(), form.getLanguage(), form.getReason());
+            rabbitService.handleSendMsg(appName, updateVideoQueue, form, CMD_DONE_TRANSLATE_SUBTITLE);
+            return;
+        }
+
+        String minioFileUrl = minioService.normalizeObjectFileUrl(form.getFileUrl().trim());
+        try {
+            String localFileUrl = downloadSubtitleToLibrary(videoId, minioFileUrl, form.getLanguage(), CMD_DONE_TRANSLATE_SUBTITLE);
+            form.setFileUrl(localFileUrl);
+        } catch (Exception e) {
+            log.error("CMD_DONE_TRANSLATE_SUBTITLE: MinIO download failed for videoId={}, subtitleId={}, fileUrl={}",
+                    videoId, form.getSubtitleId(), minioFileUrl, e);
+            form.setState(VIDEO_LIBRARY_STATE_ERROR);
+            form.setReason(REASON_DOWNLOAD_VTT_FILE_FAILED);
+            rabbitService.handleSendMsg(appName, updateVideoQueue, form, CMD_DONE_TRANSLATE_SUBTITLE);
+            return;
+        }
+
+        rabbitService.handleSendMsg(appName, updateVideoQueue, form, CMD_DONE_TRANSLATE_SUBTITLE);
+        log.info("CMD_DONE_TRANSLATE_SUBTITLE: sent update to updateVideoQueue for videoId={}, subtitleId={}",
+                videoId, form.getSubtitleId());
+
+        minioService.deleteObjectByFileUrl(minioFileUrl);
+        log.info("CMD_DONE_TRANSLATE_SUBTITLE: requested MinIO cleanup for videoId={}, subtitleId={}, vtt={}",
+                videoId, form.getSubtitleId(), minioFileUrl);
+    }
+
+    public void processDeleteSubtitleMessage(DeleteSubtitleForm data) {
+        if (data == null || data.getVideoId() == null || data.getFileUrl() == null || data.getFileUrl().isBlank()) {
+            throw new BadRequestException("videoId and fileUrl are required to delete subtitle");
+        }
+
+        Long videoId = data.getVideoId();
+        Path subtitlePath = resolveLibraryFilePath(videoId, data.getFileUrl());
+
+        try {
+            if (Files.deleteIfExists(subtitlePath)) {
+                log.info("CMD_DELETE_SUBTITLE: deleted subtitle, videoId={}, fileUrl={}, localPath={}",
+                        videoId, data.getFileUrl(), subtitlePath);
+            } else {
+                log.warn("CMD_DELETE_SUBTITLE: subtitle not found, videoId={}, fileUrl={}, localPath={}",
+                        videoId, data.getFileUrl(), subtitlePath);
+            }
+        } catch (Exception e) {
+            log.error("CMD_DELETE_SUBTITLE: failed to delete subtitle, videoId={}, fileUrl={}, localPath={}",
+                    videoId, data.getFileUrl(), subtitlePath, e);
+            throw new BadRequestException("Delete subtitle failed: " + e.getMessage());
+        }
+    }
+
+    public void processTranslateSubtitleMessage(TranslateSubtitleForm data) {
+        ServerConfigDto serverConfig = validateServerActive();
+        Long videoId = data.getVideoId();
+        Path subtitlePath = resolveLibraryFilePath(videoId, data.getFileUrl());
+        if (!Files.isRegularFile(subtitlePath)) {
+            throw new BadRequestException("Subtitle file not found: " + data.getFileUrl());
+        }
+
+        String minioFileUrl = minioService.uploadSubtitleForTranslation(videoId, data.getSourceLang(), subtitlePath);
+        data.setFileUrl(minioFileUrl);
+        data.setServerNumber(serverConfig.getServerNumber());
+        rabbitService.handleSendMsg(appName, subtitleRequestsQueue, data, CMD_TRANSLATE_SUBTITLE);
+        log.info("CMD_TRANSLATE_SUBTITLE: sent translate request, videoId={}, subtitleId={}, sourceLang={}, destLang={}, fileUrl={}",
+                videoId, data.getSubtitleId(), data.getSourceLang(), data.getDestLang(), minioFileUrl);
+    }
+
+    private String downloadSubtitleToLibrary(Long videoId, String fileUrl, String language, String cmd) throws Exception {
+        Path libraryDir = Paths.get(rootDir, DIRECTORY_LIBRARY, videoId.toString()).toAbsolutePath().normalize();
+        String fileName = getSubtitleFileName(fileUrl, language);
+        Path destPath = libraryDir.resolve(fileName).normalize();
+        if (!destPath.startsWith(libraryDir)) {
+            throw new BadRequestException("Invalid subtitle file name: " + fileName);
+        }
+
+        log.info("{}: downloading videoId={}, fileUrl={}, localPath={}", cmd, videoId, fileUrl, destPath);
+        minioService.downloadObjectByFileUrl(fileUrl, destPath.toFile());
+        return String.format("/%s/%s/%s", DIRECTORY_LIBRARY, videoId, destPath.getFileName());
+    }
+
+    private String getSubtitleFileName(String fileUrl, String language) {
+        int lastSlash = fileUrl.lastIndexOf('/');
+        String fileName = (lastSlash >= 0 && lastSlash < fileUrl.length() - 1)
+                ? fileUrl.substring(lastSlash + 1)
+                : fileUrl;
+        if (fileName.isBlank()) {
+            fileName = language.trim() + ".vtt";
+        }
+        return fileName;
+    }
+
+    private Path resolveLibraryFilePath(Long videoId, String fileUrl) {
+        Path subtitlePath = Paths.get(rootDir, fileUrl).toAbsolutePath().normalize();
+        Path libraryDir = Paths.get(rootDir, DIRECTORY_LIBRARY, videoId.toString()).toAbsolutePath().normalize();
+        if (!subtitlePath.startsWith(libraryDir)) {
+            throw new BadRequestException("Invalid fileUrl: path is outside the allowed directory");
+        }
+        return subtitlePath;
+    }
+
+    private Path getAudioFileByVideoId(Long videoId) {
+        Path rootPath = Paths.get(rootDir).toAbsolutePath().normalize();
+
+        Path audioPath = rootPath
+                .resolve(DIRECTORY_LIBRARY)
+                .resolve(videoId.toString())
+                .resolve(AUDIO_FILE_NAME)
+                .normalize();
+
+        if (!audioPath.startsWith(rootPath)) {
+            throw new BadRequestException("Invalid audio path for videoId: " + videoId);
+        }
+
+        if (!Files.isRegularFile(audioPath)) {
+            throw new BadRequestException("audio.wav not found after conversion for videoId: " + videoId);
+        }
+        return audioPath;
+    }
+
+    public UploadFileDto uploadSubtitle(Long videoId, MultipartFile file) {
+        String fileName = FilenameUtils.getName(file.getOriginalFilename());
+        if (fileName == null || fileName.isBlank()) {
+            throw new BadRequestException("Invalid subtitle file name");
+        }
+        if (!"vtt".equalsIgnoreCase(FilenameUtils.getExtension(fileName))) {
+            throw new BadRequestException("Only .vtt subtitle files are allowed");
+        }
+
+        Path libraryDir = Paths.get(rootDir, DIRECTORY_LIBRARY, videoId.toString()).toAbsolutePath().normalize();
+        Path targetPath = libraryDir.resolve(fileName).normalize();
+        if (!targetPath.startsWith(libraryDir)) {
+            throw new BadRequestException("Invalid subtitle file name: " + fileName);
+        }
+
+        try {
+            Files.createDirectories(libraryDir);
+            Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            log.error("Upload subtitle failed, videoId={}, fileName={}, targetPath={}", videoId, fileName, targetPath, e);
+            throw new BadRequestException("Upload subtitle failed: " + e.getMessage());
+        }
+
+        UploadFileDto uploadFileDto = new UploadFileDto();
+        uploadFileDto.setFilePath(String.format("/%s/%s/%s", DIRECTORY_LIBRARY, videoId, fileName));
+        return uploadFileDto;
+    }
+}

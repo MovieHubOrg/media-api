@@ -1,0 +1,11 @@
+{
+    "schema_version": 2,
+    "commit": "1d657ff0b45cbb523312957774bb91786fc07362",
+    "indexed_at": "2026-07-14T06:42:35Z",
+    "project": "D-WORK_SPACE-SCHOOL-PROJECT-MovieHub-media-api",
+    "nodes": 1141,
+    "edges": 2489,
+    "original_size": 5242880,
+    "compressed_size": 640759,
+    "compression_level": 3
+}
